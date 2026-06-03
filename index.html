@@ -3,393 +3,553 @@
 
   const $ = (id) => document.getElementById(id);
 
-  const ui = {
-    speed: $("speed-value"),
-    limit: $("limit-value"),
-    light: $("light-value"),
-    gear: $("gear-value"),
-    mission: $("mission-value"),
-    feedback: $("feedback-value"),
-    score: $("score-value"),
-    mistakes: $("mistake-value"),
-    distance: $("distance-value"),
-    best: $("best-value"),
-    modeBadge: $("mode-badge"),
-    cameraStatus: $("camera-status"),
-    steerReadout: $("steer-readout"),
-    throttleReadout: $("throttle-readout"),
-    brakeReadout: $("brake-readout"),
-    wheelVisual: $("wheel-visual"),
-    webcam: $("webcam"),
-    handOverlay: $("hand-overlay"),
-    startOverlay: $("start-overlay"),
-    finishOverlay: $("finish-overlay"),
-    finishReason: $("finish-reason"),
-    finishScore: $("finish-score"),
-    finishDistance: $("finish-distance"),
-    finishMistakes: $("finish-mistakes"),
-    simCanvas: $("sim-canvas"),
+  const el = {
+    cameraBtn: $("cameraBtn"),
+    keyboardBtn: $("keyboardBtn"),
+    resetBtn: $("resetBtn"),
+    status: $("status"),
+    video: $("video"),
+    handCanvas: $("hands"),
+    cameraState: $("cameraState"),
+    mode: $("mode"),
+    canvas: $("road"),
+    wheel: $("wheel"),
+    speed: $("speed"),
+    limit: $("limit"),
+    light: $("light"),
+    score: $("score"),
+    mission: $("mission"),
+    feedback: $("feedback"),
+    steerMeter: $("steerMeter"),
+    throttleMeter: $("throttleMeter"),
+    brakeMeter: $("brakeMeter"),
+    distance: $("distance"),
+    mistake: $("mistake"),
+    best: $("best"),
   };
 
-  const requiredIds = Object.entries(ui).filter(([, value]) => !value).map(([key]) => key);
-  if (requiredIds.length) {
-    console.error("Missing DOM elements:", requiredIds);
-    return;
-  }
-
-  const overlayCtx = ui.handOverlay.getContext("2d");
-  const keyboard = { left: false, right: false, up: false, down: false, space: false };
-
-  let DrivingSceneClass = null;
-  let GestureWheelClass = null;
-  let simulation = null;
-  let gestureWheel = null;
-  let cameraStream = null;
-  let mode = "idle";
-  let running = false;
-  let booting = false;
-  let lastTimestamp = performance.now();
-  let inputState = { steer: 0, throttle: 0, brake: false, handsOn: false };
-
-  function setText(el, value) {
-    if (el) el.textContent = value;
-  }
-
-  function setModeBadge(text) {
-    setText(ui.modeBadge, text);
-  }
-
-  function setCameraStatus(text) {
-    setText(ui.cameraStatus, text);
-  }
-
-  function hideStartOverlay() {
-    ui.startOverlay.classList.remove("active");
-  }
-
-  function showStartOverlay() {
-    ui.startOverlay.classList.add("active");
-  }
-
-  function resizeOverlay() {
-    const rect = ui.webcam.getBoundingClientRect();
-    const ratio = window.devicePixelRatio || 1;
-    ui.handOverlay.width = Math.max(1, Math.round(rect.width * ratio));
-    ui.handOverlay.height = Math.max(1, Math.round(rect.height * ratio));
-    ui.handOverlay.style.width = `${rect.width}px`;
-    ui.handOverlay.style.height = `${rect.height}px`;
-    overlayCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  }
-
-  function resetInput() {
-    inputState = { steer: 0, throttle: 0, brake: false, handsOn: false };
-    keyboard.left = false;
-    keyboard.right = false;
-    keyboard.up = false;
-    keyboard.down = false;
-    keyboard.space = false;
-  }
-
-  function updateWheelPreview() {
-    const angle = inputState.steer * 110;
-    ui.wheelVisual.style.transform = `rotate(${angle}deg)`;
-    setText(ui.steerReadout, `${Math.round(angle)}°`);
-    setText(ui.throttleReadout, `${Math.round(inputState.throttle * 100)}%`);
-    setText(ui.brakeReadout, inputState.brake ? "ON" : "OFF");
-  }
-
-  function setDefaultHud() {
-    setText(ui.speed, "0");
-    setText(ui.limit, "50");
-    setText(ui.light, "GREEN");
-    setText(ui.gear, "D");
-    setText(ui.mission, "출발 후 차선을 유지하고 첫 신호 구간을 통과해보세요.");
-    setText(ui.feedback, "원하는 시작 버튼을 눌러 연습을 시작하세요.");
-    setText(ui.score, "100");
-    setText(ui.mistakes, "0");
-    setText(ui.distance, "0 m");
-    setText(ui.best, localStorage.getItem("my-driving-skills-best") || "0");
-  }
-
-  function syncHud() {
-    if (!simulation) {
-      setDefaultHud();
-      return;
-    }
-
-    const snapshot = simulation.snapshot();
-    setText(ui.speed, snapshot.speedKmh);
-    setText(ui.limit, snapshot.speedLimit);
-    setText(ui.light, snapshot.trafficLight);
-    setText(ui.gear, snapshot.gear);
-    setText(ui.mission, snapshot.mission);
-    setText(ui.feedback, snapshot.feedback);
-    setText(ui.score, snapshot.score);
-    setText(ui.mistakes, snapshot.mistakes);
-    setText(ui.distance, `${snapshot.distanceMeters} m`);
-    setText(ui.best, snapshot.bestScore);
-
-    if (snapshot.finished) {
-      setText(ui.finishReason, snapshot.finishReason);
-      setText(ui.finishScore, snapshot.score);
-      setText(ui.finishDistance, `${snapshot.distanceMeters} m`);
-      setText(ui.finishMistakes, snapshot.mistakes);
-      ui.finishOverlay.classList.add("active");
-      running = false;
-    }
-  }
-
-  function keyboardInput(dt) {
-    const steerTarget = (keyboard.right ? 1 : 0) - (keyboard.left ? 1 : 0);
-    const throttleTarget = keyboard.up ? 1 : 0;
-    const brake = keyboard.down || keyboard.space;
-    inputState.steer += (steerTarget - inputState.steer) * Math.min(1, dt * 10);
-    inputState.throttle += (throttleTarget - inputState.throttle) * Math.min(1, dt * 6);
-    if (!keyboard.up) inputState.throttle *= 0.96;
-    inputState.brake = brake;
-    inputState.handsOn = false;
-  }
-
-  function applyCameraInput(timestamp) {
-    if (!gestureWheel) return;
-    const state = gestureWheel.step(timestamp);
-    inputState = { ...state };
-    resizeOverlay();
-    gestureWheel.draw(ui.handOverlay, overlayCtx);
-    setCameraStatus(state.handsOn
-      ? "양손 인식 중 · 허공 핸들 조향 활성화"
-      : "양손이 충분히 보이지 않습니다. 화면 안에 양손을 넣어주세요."
-    );
-  }
-
-  async function requestCameraPermissionImmediately() {
-    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
-      throw new Error("camera-api-unavailable");
-    }
-
-    setCameraStatus("카메라 권한 요청 중입니다. 팝업이 뜨면 허용을 눌러주세요.");
-
-    if (cameraStream) {
-      for (const track of cameraStream.getTracks()) track.stop();
-      cameraStream = null;
-    }
-
-    const constraints = {
-      audio: false,
-      video: {
-        width: { ideal: 960 },
-        height: { ideal: 720 },
-        facingMode: "user",
-      },
-    };
-
-    // 중요: 이 함수는 버튼 클릭 핸들러 안에서 가장 먼저 호출됩니다.
-    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
-    ui.webcam.srcObject = cameraStream;
-    ui.webcam.muted = true;
-    ui.webcam.playsInline = true;
-    await ui.webcam.play();
-    resizeOverlay();
-    setCameraStatus("카메라 연결 완료 · 손 인식 모듈 로딩 중입니다.");
-    return cameraStream;
-  }
-
-  async function ensureSimulation() {
-    if (!DrivingSceneClass) {
-      setModeBadge("시뮬레이터 로딩 중");
-      const module = await import("./drive-scene.js");
-      DrivingSceneClass = module.DrivingScene;
-    }
-    if (!simulation) {
-      simulation = new DrivingSceneClass(ui.simCanvas);
-    }
-    return simulation;
-  }
-
-  async function ensureGestureWheel(stream) {
-    if (!GestureWheelClass) {
-      const module = await import("./gesture-wheel.js");
-      GestureWheelClass = module.GestureWheel;
-    }
-    if (!gestureWheel) {
-      gestureWheel = new GestureWheelClass(ui.webcam);
-      await gestureWheel.init();
-    }
-    await gestureWheel.useStream(stream);
-    return gestureWheel;
-  }
-
-  async function bootSimulationAfterInput(nextMode, stream = null) {
-    try {
-      await ensureSimulation();
-    } catch (error) {
-      console.error(error);
-      running = false;
-      mode = "idle";
-      setModeBadge("시뮬레이터 로드 실패");
-      setCameraStatus("시뮬레이터 로딩에 실패했습니다. 인터넷 연결 또는 WebGL 설정을 확인해주세요.");
-      setText(ui.feedback, "Three.js 또는 WebGL 로딩에 실패했습니다.");
-      return false;
-    }
-
-    simulation.start();
-    running = true;
-    lastTimestamp = performance.now();
-
-    if (nextMode === "camera" && stream) {
-      mode = "camera";
-      setModeBadge("웹캠 모드");
-      try {
-        await ensureGestureWheel(stream);
-        setCameraStatus("양손을 화면에 보이게 해주세요.");
-      } catch (error) {
-        console.error(error);
-        mode = "keyboard";
-        setModeBadge("키보드 모드");
-        setCameraStatus("카메라는 켜졌지만 손 인식 모듈 로딩에 실패해서 키보드 모드로 전환했습니다.");
+  // 이미지 경로가 깨져도 휠이 사라지지 않도록 root fallback을 둡니다.
+  if (el.wheel) {
+    el.wheel.addEventListener("error", () => {
+      if (!el.wheel.dataset.fallback) {
+        el.wheel.dataset.fallback = "1";
+        el.wheel.src = "tesla-wheel.png";
       }
-    } else {
-      mode = "keyboard";
-      setModeBadge("키보드 모드");
-      setCameraStatus("키보드 모드로 주행 중입니다.");
-    }
-
-    syncHud();
-    return true;
-  }
-
-  async function startCameraMode() {
-    if (booting) return;
-    booting = true;
-    ui.finishOverlay.classList.remove("active");
-    hideStartOverlay();
-    resetInput();
-    updateWheelPreview();
-    mode = "camera";
-    setModeBadge("카메라 권한 요청");
-
-    let stream = null;
-    try {
-      stream = await requestCameraPermissionImmediately();
-    } catch (error) {
-      console.error(error);
-      mode = "idle";
-      setModeBadge("카메라 실패");
-      setCameraStatus("카메라 권한 요청이 실패했습니다. 화면의 오류명을 확인해주세요.");
-      setText(ui.feedback, "카메라 권한 요청이 실패했습니다. 아래 키보드 시작 버튼으로도 연습할 수 있습니다.");
-      booting = false;
-      return;
-    }
-
-    await bootSimulationAfterInput("camera", stream);
-    booting = false;
-  }
-
-  async function startKeyboardMode() {
-    if (booting) return;
-    booting = true;
-    ui.finishOverlay.classList.remove("active");
-    hideStartOverlay();
-    resetInput();
-    updateWheelPreview();
-    await bootSimulationAfterInput("keyboard", null);
-    booting = false;
-  }
-
-  function loop(timestamp) {
-    const dt = Math.min(0.033, Math.max(0, (timestamp - lastTimestamp) / 1000));
-    lastTimestamp = timestamp;
-
-    if (running && simulation) {
-      if (mode === "camera") {
-        applyCameraInput(timestamp);
-      } else if (mode === "keyboard") {
-        keyboardInput(dt);
-        overlayCtx.clearRect(0, 0, ui.handOverlay.width, ui.handOverlay.height);
-      }
-      updateWheelPreview();
-      simulation.setInput(inputState);
-      simulation.update(dt);
-      syncHud();
-    }
-
-    requestAnimationFrame(loop);
-  }
-
-  function setKey(event, pressed) {
-    const handledKeys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "];
-    if (handledKeys.includes(event.key)) event.preventDefault();
-    if (event.key === "ArrowLeft") keyboard.left = pressed;
-    if (event.key === "ArrowRight") keyboard.right = pressed;
-    if (event.key === "ArrowUp") keyboard.up = pressed;
-    if (event.key === "ArrowDown") keyboard.down = pressed;
-    if (event.key === " ") keyboard.space = pressed;
-  }
-
-  function bindButton(id, handler) {
-    const button = $(id);
-    if (!button) return;
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      handler();
     });
   }
 
+  const ctx = el.canvas.getContext("2d");
+  const handCtx = el.handCanvas.getContext("2d");
 
-
-  async function beginCameraFromReadyEvent(event) {
-    if (booting) return;
-    booting = true;
-    ui.finishOverlay.classList.remove("active");
-    hideStartOverlay();
-    resetInput();
-    updateWheelPreview();
-    const stream = event && event.detail ? event.detail.stream : window.__mdsCameraStream;
-    await bootSimulationAfterInput("camera", stream);
-    booting = false;
-  }
-
-  async function beginKeyboardFromReadyEvent() {
-    if (booting) return;
-    booting = true;
-    ui.finishOverlay.classList.remove("active");
-    hideStartOverlay();
-    resetInput();
-    updateWheelPreview();
-    await bootSimulationAfterInput("keyboard", null);
-    booting = false;
-  }
-
-  function restartToStartScreen() {
-    resetInput();
-    updateWheelPreview();
-    ui.finishOverlay.classList.remove("active");
-    showStartOverlay();
-    setModeBadge("대기 중");
-    setCameraStatus("다시 시작할 입력 방식을 선택하세요.");
-    running = false;
-  }
-
-  window.MyDrivingSkills = {
-    startCamera: startCameraMode,
-    startKeyboard: startKeyboardMode,
+  const keys = { left: false, right: false, up: false, down: false, space: false };
+  const sim = {
+    running: false,
+    mode: "idle",
+    x: 0,
+    steer: 0,
+    throttle: 0,
+    brake: false,
+    speed: 0,
+    distance: 0,
+    score: 100,
+    mistakes: 0,
+    limit: 50,
+    light: "GREEN",
+    nextSignal: 260,
+    nextCone: 430,
+    curveStart: 620,
+    curveEnd: 850,
+    curveDir: -1,
+    finished: false,
+    best: Number(localStorage.getItem("my-driving-skills-best") || 0),
   };
 
-  window.addEventListener("resize", resizeOverlay);
-  window.addEventListener("keydown", (event) => setKey(event, true));
-  window.addEventListener("keyup", (event) => setKey(event, false));
+  let lastTime = performance.now();
+  let cameraStream = null;
+  let handLandmarker = null;
+  let handReady = false;
+  let lastVideoTime = -1;
+  let handResults = null;
 
-  window.addEventListener("mydriving-camera-ready", beginCameraFromReadyEvent);
-  window.addEventListener("mydriving-keyboard-ready", beginKeyboardFromReadyEvent);
-  bindButton("restart-button", restartToStartScreen);
+  el.best.textContent = sim.best;
 
-  if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-    setCameraStatus("카메라 권한 팝업은 HTTPS 또는 localhost에서만 뜹니다. GitHub Pages 배포 주소에서 실행해주세요.");
+  function setStatus(message) {
+    el.status.textContent = message;
   }
 
-  resizeOverlay();
-  updateWheelPreview();
-  setDefaultHud();
+  function resetSim(mode) {
+    sim.running = true;
+    sim.mode = mode;
+    sim.x = 0;
+    sim.steer = 0;
+    sim.throttle = 0;
+    sim.brake = false;
+    sim.speed = 0;
+    sim.distance = 0;
+    sim.score = 100;
+    sim.mistakes = 0;
+    sim.limit = 50;
+    sim.light = "GREEN";
+    sim.nextSignal = 260;
+    sim.nextCone = 430;
+    sim.curveStart = 620;
+    sim.curveEnd = 850;
+    sim.curveDir = -1;
+    sim.finished = false;
+    el.mode.textContent = mode === "camera" ? "웹캠" : "키보드";
+    setStatus(mode === "camera" ? "웹캠 모드가 시작되었습니다. 키보드 조작도 함께 사용할 수 있습니다." : "키보드 모드가 시작되었습니다.");
+  }
+
+  async function startCameraMode() {
+    resetSim("camera");
+    el.cameraState.textContent = "카메라 권한을 요청하는 중입니다...";
+    setStatus("카메라 권한 팝업을 확인해주세요.");
+
+    try {
+      // 중요: 버튼 클릭 직후 여기서 바로 권한 요청을 실행합니다.
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+      el.video.srcObject = cameraStream;
+      await el.video.play();
+      el.cameraState.textContent = "카메라 켜짐 · 손 인식 모델 로딩 중";
+      setStatus("카메라 권한이 허용되었습니다. 손 인식 모델을 불러오는 중입니다.");
+
+      loadHandModelSafely();
+    } catch (error) {
+      console.error(error);
+      el.cameraState.textContent = `카메라 실패: ${error.name || "UnknownError"}`;
+      setStatus(`카메라 권한 요청 실패: ${error.name || "UnknownError"} · 키보드 모드로 계속 진행합니다.`);
+      sim.mode = "keyboard";
+      el.mode.textContent = "키보드";
+    }
+  }
+
+  async function loadHandModelSafely() {
+    try {
+      const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm");
+      const fileset = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+      handLandmarker = await vision.HandLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numHands: 2,
+      });
+      handReady = true;
+      el.cameraState.textContent = "카메라 켜짐 · 양손을 화면에 보여주세요";
+      setStatus("손 인식 준비 완료. 양손을 화면에 보이고 허공 핸들처럼 기울여보세요.");
+    } catch (error) {
+      console.error(error);
+      handReady = false;
+      el.cameraState.textContent = "카메라 켜짐 · 손 인식 로딩 실패, 키보드 조작 가능";
+      setStatus("카메라는 켜졌지만 손 인식 모듈 로딩에 실패했습니다. 키보드 조작으로 계속 진행할 수 있습니다.");
+    }
+  }
+
+  function startKeyboardMode() {
+    resetSim("keyboard");
+    el.cameraState.textContent = "키보드 모드";
+  }
+
+  function hardReset() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      cameraStream = null;
+    }
+    el.video.srcObject = null;
+    handReady = false;
+    handLandmarker = null;
+    sim.running = false;
+    sim.mode = "idle";
+    el.mode.textContent = "대기";
+    el.cameraState.textContent = "카메라 꺼짐";
+    setStatus("초기화되었습니다.");
+  }
+
+  function drawHandOverlay() {
+    handCtx.clearRect(0, 0, el.handCanvas.width, el.handCanvas.height);
+    if (!handResults?.landmarks?.length) return;
+    const links = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+    handCtx.lineWidth = 3;
+    for (const hand of handResults.landmarks) {
+      handCtx.strokeStyle = "rgba(102,239,255,.9)";
+      handCtx.fillStyle = "rgba(255,112,184,.95)";
+      for (const [a,b] of links) {
+        handCtx.beginPath();
+        handCtx.moveTo(hand[a].x * el.handCanvas.width, hand[a].y * el.handCanvas.height);
+        handCtx.lineTo(hand[b].x * el.handCanvas.width, hand[b].y * el.handCanvas.height);
+        handCtx.stroke();
+      }
+      for (const p of hand) {
+        handCtx.beginPath();
+        handCtx.arc(p.x * el.handCanvas.width, p.y * el.handCanvas.height, 3, 0, Math.PI * 2);
+        handCtx.fill();
+      }
+    }
+  }
+
+  function gripAmount(hand) {
+    const tipIds = [4, 8, 12, 16, 20];
+    const pipIds = [3, 6, 10, 14, 18];
+    const dx = hand[9].x - hand[0].x;
+    const dy = hand[9].y - hand[0].y;
+    const size = Math.hypot(dx, dy) || 1e-3;
+    let extended = 0;
+    for (let f = 1; f < 5; f++) {
+      const tip = hand[tipIds[f]];
+      const pip = hand[pipIds[f]];
+      const dTip = Math.hypot(tip.x - hand[0].x, tip.y - hand[0].y);
+      const dPip = Math.hypot(pip.x - hand[0].x, pip.y - hand[0].y);
+      if (dTip > dPip + size * 0.15) extended += 1;
+    }
+    return 1 - extended / 4;
+  }
+
+  function palmCenter(hand) {
+    const ids = [0, 5, 9, 13, 17];
+    let x = 0, y = 0;
+    for (const id of ids) {
+      x += hand[id].x;
+      y += hand[id].y;
+    }
+    return { x: 1 - x / ids.length, y: y / ids.length };
+  }
+
+  function readCameraHands(timestamp) {
+    if (!handReady || !handLandmarker || el.video.readyState < 2) return false;
+    if (el.video.currentTime === lastVideoTime) return true;
+
+    lastVideoTime = el.video.currentTime;
+    handResults = handLandmarker.detectForVideo(el.video, timestamp);
+    drawHandOverlay();
+
+    const hands = handResults?.landmarks ?? [];
+    if (hands.length < 2) return false;
+
+    const a = palmCenter(hands[0]);
+    const b = palmCenter(hands[1]);
+    const left = a.x < b.x ? a : b;
+    const right = a.x < b.x ? b : a;
+    const angle = Math.atan2(right.y - left.y, right.x - left.x);
+    const targetSteer = Math.max(-1, Math.min(1, angle / 0.62));
+    const targetThrottle = Math.max(0, Math.min(1, ((gripAmount(hands[0]) + gripAmount(hands[1])) / 2 - 0.22) / 0.64));
+    const brake = (left.y + right.y) / 2 < 0.28;
+
+    sim.steer += (targetSteer - sim.steer) * 0.28;
+    sim.throttle += ((brake ? 0 : targetThrottle) - sim.throttle) * 0.16;
+    sim.brake = brake;
+    return true;
+  }
+
+  function readKeyboard(dt) {
+    const steerTarget = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    const throttleTarget = keys.up ? 1 : 0;
+    sim.steer += (steerTarget - sim.steer) * Math.min(1, dt * 9);
+    sim.throttle += (throttleTarget - sim.throttle) * Math.min(1, dt * 6);
+    if (!keys.up) sim.throttle *= 0.96;
+    sim.brake = keys.down || keys.space;
+  }
+
+  function updatePhysics(dt, timestamp) {
+    if (!sim.running) return;
+
+    const cameraControlled = sim.mode === "camera" && readCameraHands(timestamp);
+    if (!cameraControlled || keys.left || keys.right || keys.up || keys.down || keys.space) {
+      readKeyboard(dt);
+    }
+
+    const accel = sim.throttle * 32;
+    const braking = sim.brake ? 48 : 0;
+    const drag = 10 + sim.speed * 0.12;
+    sim.speed = Math.max(0, Math.min(42, sim.speed + (accel - braking - drag) * dt));
+
+    sim.x += sim.steer * (0.9 + sim.speed * 0.02) * dt * 12;
+    sim.x = Math.max(-8, Math.min(8, sim.x));
+    sim.distance += sim.speed * dt * 3.4;
+
+    const lightCycle = Math.floor((performance.now() / 1000) % 14);
+    sim.light = lightCycle < 7 ? "GREEN" : lightCycle < 9 ? "YELLOW" : "RED";
+
+    const kmh = sim.speed * 3.2;
+    const inCurve = sim.distance > sim.curveStart && sim.distance < sim.curveEnd;
+    if (inCurve) {
+      sim.limit = 35;
+      sim.x += sim.curveDir * 0.12 * dt;
+      el.mission.textContent = sim.curveDir < 0 ? "좌측 커브입니다. 속도를 낮추고 부드럽게 조향하세요." : "우측 커브입니다. 속도를 낮추고 부드럽게 조향하세요.";
+    } else if (sim.distance > 900) {
+      sim.limit = 45;
+      el.mission.textContent = "다음 장애물 구간을 차선을 유지하며 통과하세요.";
+    } else {
+      sim.limit = 50;
+    }
+
+    let feedback = "좋습니다. 차선과 속도를 계속 확인하세요.";
+    if (kmh > sim.limit + 8) {
+      sim.score -= 9 * dt;
+      feedback = `과속입니다. 제한속도 ${sim.limit}km/h에 맞춰주세요.`;
+    }
+    if (Math.abs(sim.x) > 6.8) {
+      sim.score -= 6 * dt;
+      feedback = "차선 밖으로 벗어나고 있습니다. 중앙으로 복귀하세요.";
+    }
+
+    if (Math.abs(sim.distance - sim.nextSignal) < 4 && sim.light === "RED" && kmh > 7) {
+      sim.score -= 16;
+      sim.mistakes += 1;
+      sim.nextSignal += 520;
+      feedback = "빨간불에서 정지선을 넘었습니다.";
+    } else if (sim.distance > sim.nextSignal + 10) {
+      sim.nextSignal += 520;
+      if (sim.light !== "RED") sim.score += 3;
+    }
+
+    if (Math.abs(sim.distance - sim.nextCone) < 5 && Math.abs(sim.x) < 1.55) {
+      sim.score -= 20;
+      sim.mistakes += 1;
+      sim.nextCone += 470;
+      feedback = "장애물과 너무 가깝습니다. 옆 차선으로 회피하세요.";
+    } else if (sim.distance > sim.nextCone + 12) {
+      sim.nextCone += 470;
+    }
+
+    if (sim.score <= 0) {
+      sim.score = 0;
+      sim.running = false;
+      feedback = "점수가 0점이 되어 주행이 종료되었습니다. 다시 도전해보세요.";
+    }
+    if (sim.distance > 1800) {
+      sim.running = false;
+      feedback = "연습 코스를 완주했습니다. 베스트 드라이버에 가까워졌습니다!";
+      sim.score += 10;
+    }
+
+    sim.best = Math.max(sim.best, Math.round(sim.score));
+    localStorage.setItem("my-driving-skills-best", String(sim.best));
+    el.feedback.textContent = feedback;
+  }
+
+  function drawRoad() {
+    const canvas = el.canvas;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    ctx.clearRect(0, 0, w, h);
+
+    const sky = ctx.createLinearGradient(0, 0, 0, h * 0.55);
+    sky.addColorStop(0, "#8dcaff");
+    sky.addColorStop(1, "#e7f5ff");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = "#2e8a4f";
+    ctx.fillRect(0, h * 0.45, w, h * 0.55);
+
+    const horizon = h * 0.43;
+    const roadTop = 160;
+    const roadBottom = w * 0.92;
+    const cx = w / 2 - sim.x * 14;
+
+    ctx.fillStyle = "#2c3340";
+    ctx.beginPath();
+    ctx.moveTo(cx - roadTop / 2, horizon);
+    ctx.lineTo(cx + roadTop / 2, horizon);
+    ctx.lineTo(w / 2 + roadBottom / 2, h);
+    ctx.lineTo(w / 2 - roadBottom / 2, h);
+    ctx.closePath();
+    ctx.fill();
+
+    // road shoulders
+    ctx.strokeStyle = "#f5f7ff";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(cx - roadTop / 2, horizon);
+    ctx.lineTo(w / 2 - roadBottom / 2, h);
+    ctx.moveTo(cx + roadTop / 2, horizon);
+    ctx.lineTo(w / 2 + roadBottom / 2, h);
+    ctx.stroke();
+
+    // lane center dashed line
+    const offset = (sim.distance * 1.8) % 80;
+    for (let i = -1; i < 12; i++) {
+      const y1 = horizon + i * 80 + offset;
+      const y2 = y1 + 42;
+      if (y1 < horizon || y1 > h) continue;
+      const scale1 = (y1 - horizon) / (h - horizon);
+      const scale2 = (y2 - horizon) / (h - horizon);
+      ctx.strokeStyle = "#fff4a0";
+      ctx.lineWidth = 4 + scale1 * 5;
+      ctx.beginPath();
+      ctx.moveTo(cx, y1);
+      ctx.lineTo(cx, y2);
+      ctx.stroke();
+
+      // lane side marks
+      ctx.strokeStyle = "rgba(255,255,255,.45)";
+      ctx.lineWidth = 2 + scale1 * 3;
+      ctx.beginPath();
+      ctx.moveTo(cx - 92 * scale1, y1);
+      ctx.lineTo(cx - 110 * scale2, y2);
+      ctx.moveTo(cx + 92 * scale1, y1);
+      ctx.lineTo(cx + 110 * scale2, y2);
+      ctx.stroke();
+    }
+
+    drawSignal();
+    drawCone();
+    drawCurveSign();
+
+    // player car
+    const carY = h - 108;
+    const carX = w / 2 + sim.x * 28;
+    ctx.save();
+    ctx.translate(carX, carY);
+    ctx.rotate(sim.steer * 0.08);
+    ctx.fillStyle = "#38d4ff";
+    roundRect(ctx, -54, -82, 108, 164, 22);
+    ctx.fill();
+    ctx.fillStyle = "#07111f";
+    roundRect(ctx, -36, -56, 72, 74, 16);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.75)";
+    ctx.fillRect(-38, -86, 76, 10);
+    ctx.fillStyle = "#111";
+    ctx.fillRect(-64, -48, 16, 42);
+    ctx.fillRect(48, -48, 16, 42);
+    ctx.fillRect(-64, 38, 16, 42);
+    ctx.fillRect(48, 38, 16, 42);
+    ctx.restore();
+  }
+
+  function drawSignal() {
+    const w = el.canvas.width;
+    const h = el.canvas.height;
+    const dz = sim.nextSignal - sim.distance;
+    if (dz < -40 || dz > 360) return;
+    const t = 1 - dz / 360;
+    const y = h * (0.43 + t * 0.48);
+    const scale = 0.25 + t * 1.4;
+    const x = w / 2;
+
+    // stop line and crosswalk
+    ctx.strokeStyle = "rgba(255,255,255,.9)";
+    ctx.lineWidth = 3 + scale * 6;
+    ctx.beginPath();
+    ctx.moveTo(x - 210 * scale, y + 70 * scale);
+    ctx.lineTo(x + 210 * scale, y + 70 * scale);
+    ctx.stroke();
+
+    ctx.fillStyle = "#101722";
+    roundRect(ctx, x - 70 * scale, y - 170 * scale, 140 * scale, 44 * scale, 10 * scale);
+    ctx.fill();
+    const colors = { RED: "#ff4158", YELLOW: "#ffd14e", GREEN: "#57f28d" };
+    ["RED", "YELLOW", "GREEN"].forEach((name, i) => {
+      ctx.beginPath();
+      ctx.fillStyle = sim.light === name ? colors[name] : "#333844";
+      ctx.arc(x + (-45 + i * 45) * scale, y - 148 * scale, 13 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  function drawCone() {
+    const dz = sim.nextCone - sim.distance;
+    if (dz < -25 || dz > 330) return;
+    const w = el.canvas.width;
+    const h = el.canvas.height;
+    const t = 1 - dz / 330;
+    const y = h * (0.45 + t * 0.48);
+    const scale = 0.2 + t * 1.6;
+    const x = w / 2;
+
+    ctx.fillStyle = "#ff7a1d";
+    ctx.beginPath();
+    ctx.moveTo(x, y - 42 * scale);
+    ctx.lineTo(x - 34 * scale, y + 42 * scale);
+    ctx.lineTo(x + 34 * scale, y + 42 * scale);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(x - 22 * scale, y + 5 * scale, 44 * scale, 8 * scale);
+    ctx.fillStyle = "#111";
+    ctx.fillRect(x - 42 * scale, y + 42 * scale, 84 * scale, 12 * scale);
+  }
+
+  function drawCurveSign() {
+    const inRange = sim.distance > sim.curveStart - 260 && sim.distance < sim.curveEnd + 60;
+    if (!inRange) return;
+    const dz = sim.curveStart - sim.distance;
+    const w = el.canvas.width;
+    const h = el.canvas.height;
+    const t = Math.max(0, Math.min(1, 1 - dz / 280));
+    const scale = 0.55 + t * 0.5;
+    const x = w * 0.18;
+    const y = h * 0.32 + t * 50;
+    ctx.fillStyle = "#ffd84d";
+    roundRect(ctx, x - 45 * scale, y - 32 * scale, 90 * scale, 64 * scale, 10);
+    ctx.fill();
+    ctx.fillStyle = "#0b1220";
+    ctx.font = `${Math.round(54 * scale)}px Segoe UI Symbol, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(sim.curveDir < 0 ? "↶" : "↷", x, y + 2 * scale);
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+
+  function updateHud() {
+    const kmh = Math.round(sim.speed * 3.2);
+    el.speed.textContent = kmh;
+    el.limit.textContent = sim.limit;
+    el.light.textContent = sim.light;
+    el.score.textContent = Math.round(sim.score);
+    el.distance.textContent = `${Math.round(sim.distance)} m`;
+    el.mistake.textContent = sim.mistakes;
+    el.best.textContent = sim.best;
+    el.steerMeter.textContent = `${Math.round(sim.steer * 110)}°`;
+    el.throttleMeter.textContent = `${Math.round(sim.throttle * 100)}%`;
+    el.brakeMeter.textContent = sim.brake ? "ON" : "OFF";
+    el.wheel.style.transform = `rotate(${sim.steer * 110}deg)`;
+  }
+
+  function loop(now) {
+    const dt = Math.min(0.033, (now - lastTime) / 1000);
+    lastTime = now;
+    updatePhysics(dt, now);
+    drawRoad();
+    updateHud();
+    requestAnimationFrame(loop);
+  }
+
+  function bind() {
+    el.cameraBtn.addEventListener("click", startCameraMode);
+    el.keyboardBtn.addEventListener("click", startKeyboardMode);
+    el.resetBtn.addEventListener("click", hardReset);
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") keys.left = true;
+      if (e.key === "ArrowRight") keys.right = true;
+      if (e.key === "ArrowUp") keys.up = true;
+      if (e.key === "ArrowDown") keys.down = true;
+      if (e.key === " ") keys.space = true;
+    });
+    window.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowLeft") keys.left = false;
+      if (e.key === "ArrowRight") keys.right = false;
+      if (e.key === "ArrowUp") keys.up = false;
+      if (e.key === "ArrowDown") keys.down = false;
+      if (e.key === " ") keys.space = false;
+    });
+  }
+
+  bind();
+  drawRoad();
+  updateHud();
   requestAnimationFrame(loop);
 })();
