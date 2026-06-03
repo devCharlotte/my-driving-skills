@@ -24,13 +24,15 @@ export class GestureWheel {
     });
   }
 
-  async startCamera() {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 960, height: 720, facingMode: "user" },
-      audio: false,
-    });
-    this.videoEl.srcObject = stream;
-    await new Promise((resolve) => { this.videoEl.onloadedmetadata = resolve; });
+  async useStream(stream) {
+    if (stream && this.videoEl.srcObject !== stream) {
+      this.videoEl.srcObject = stream;
+    }
+    if (this.videoEl.readyState < 2) {
+      await new Promise((resolve) => {
+        this.videoEl.onloadedmetadata = resolve;
+      });
+    }
     await this.videoEl.play();
   }
 
@@ -80,8 +82,9 @@ export class GestureWheel {
   }
 
   draw(canvas, ctx) {
-    const { width, height } = canvas;
-    ctx.clearRect(0, 0, width, height);
+    const cssWidth = canvas.clientWidth || 1;
+    const cssHeight = canvas.clientHeight || 1;
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
     const hands = this.results?.landmarks ?? [];
     if (!hands.length) return;
 
@@ -100,13 +103,13 @@ export class GestureWheel {
     for (const hand of hands) {
       for (const [a, b] of links) {
         ctx.beginPath();
-        ctx.moveTo(hand[a].x * width, hand[a].y * height);
-        ctx.lineTo(hand[b].x * width, hand[b].y * height);
+        ctx.moveTo(hand[a].x * cssWidth, hand[a].y * cssHeight);
+        ctx.lineTo(hand[b].x * cssWidth, hand[b].y * cssHeight);
         ctx.stroke();
       }
       for (const point of hand) {
         ctx.beginPath();
-        ctx.arc(point.x * width, point.y * height, 3, 0, Math.PI * 2);
+        ctx.arc(point.x * cssWidth, point.y * cssHeight, 3, 0, Math.PI * 2);
         ctx.fill();
       }
     }
