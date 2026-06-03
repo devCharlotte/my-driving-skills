@@ -1,616 +1,143 @@
-import * as THREE from "three";
+import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
-const ROAD_WIDTH = 18;
-const PLAYER_BASE_Z = 18;
-const MAX_SPEED = 38;
-const LIGHT_STATES = ["GREEN", "YELLOW", "RED"];
+const WASM_ROOT = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const TIP_IDS = [4, 8, 12, 16, 20];
+const PIP_IDS = [3, 6, 10, 14, 18];
+const PALM_IDS = [0, 5, 9, 13, 17];
 
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function createRoadTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 4096;
-  const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle = "#262d39";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = "#f6f2ad";
-  for (let y = 0; y < canvas.height; y += 170) {
-    ctx.fillRect(canvas.width * 0.5 - 10, y, 20, 96);
+export class GestureWheel {
+  constructor(videoEl) {
+    this.videoEl = videoEl;
+    this.landmarker = null;
+    this.lastVideoTime = -1;
+    this.results = null;
+    this.state = { steer: 0, throttle: 0, brake: false, handsOn: false, hands: [] };
   }
 
-  ctx.fillStyle = "rgba(255,255,255,0.85)";
-  ctx.fillRect(88, 0, 18, canvas.height);
-  ctx.fillRect(canvas.width - 106, 0, 18, canvas.height);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(1, 12);
-  return texture;
-}
-
-function createGrassTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#204d2b";
-  ctx.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 1200; i += 1) {
-    ctx.fillStyle = i % 2 ? "rgba(53,123,65,0.35)" : "rgba(28,84,37,0.42)";
-    ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(16, 16);
-  return texture;
-}
-
-function createSky() {
-  const geometry = new THREE.SphereGeometry(500, 32, 16);
-  const material = new THREE.MeshBasicMaterial({ color: 0x88bffb, side: THREE.BackSide });
-  return new THREE.Mesh(geometry, material);
-}
-
-function createPlayerCar() {
-  const group = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x43d1ff, metalness: 0.4, roughness: 0.25 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x0b1320, metalness: 0.2, roughness: 0.3 });
-
-  const base = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.6, 4.1), bodyMat);
-  base.position.y = 0.6;
-  base.castShadow = true;
-  group.add(base);
-
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.6, 1.7), darkMat);
-  cabin.position.set(0, 1.05, -0.25);
-  cabin.castShadow = true;
-  group.add(cabin);
-
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 1.2), new THREE.MeshStandardMaterial({ color: 0xeaf7ff, transparent: true, opacity: 0.14 }));
-  nose.position.set(0, 0.88, 1.1);
-  group.add(nose);
-
-  const wheelGeometry = new THREE.CylinderGeometry(0.38, 0.38, 0.28, 18);
-  const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.75 });
-  const wheelSpots = [[-1.0, 1.25], [1.0, 1.25], [-1.0, -1.25], [1.0, -1.25]];
-  const wheels = [];
-  for (const [x, z] of wheelSpots) {
-    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
-    wheel.rotation.z = Math.PI * 0.5;
-    wheel.position.set(x, 0.35, z);
-    group.add(wheel);
-    wheels.push(wheel);
+  async init() {
+    const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
+    this.landmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+      runningMode: "VIDEO",
+      numHands: 2,
+    });
   }
 
-  group.userData.wheels = wheels;
-  return group;
-}
-
-function createNpcCar(color = 0xff6b6b) {
-  const car = createPlayerCar();
-  car.children[0].material = new THREE.MeshStandardMaterial({ color, metalness: 0.35, roughness: 0.3 });
-  return car;
-}
-
-function createCone() {
-  const group = new THREE.Group();
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.48, 1.15, 16), new THREE.MeshStandardMaterial({ color: 0xff7b1d, roughness: 0.45 }));
-  cone.position.y = 0.62;
-  group.add(cone);
-  const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.4, 0.07, 16), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  stripe.position.y = 0.6;
-  group.add(stripe);
-  const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.1, 0.9), new THREE.MeshStandardMaterial({ color: 0x151515 }));
-  base.position.y = 0.05;
-  group.add(base);
-  group.userData.hitRadius = 0.85;
-  return group;
-}
-
-function createSignalRig() {
-  const group = new THREE.Group();
-  const postMat = new THREE.MeshStandardMaterial({ color: 0x1c2a39, metalness: 0.35, roughness: 0.35 });
-  const beam = new THREE.Mesh(new THREE.BoxGeometry(ROAD_WIDTH + 4, 0.22, 0.22), postMat);
-  beam.position.set(0, 6.3, 0);
-  group.add(beam);
-
-  for (const x of [-ROAD_WIDTH * 0.5 - 1.1, ROAD_WIDTH * 0.5 + 1.1]) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 7, 12), postMat);
-    post.position.set(x, 3.5, 0);
-    group.add(post);
+  async startCamera() {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 960, height: 720, facingMode: "user" },
+      audio: false,
+    });
+    this.videoEl.srcObject = stream;
+    await new Promise((resolve) => { this.videoEl.onloadedmetadata = resolve; });
+    await this.videoEl.play();
   }
 
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.3, 0.34), new THREE.MeshStandardMaterial({ color: 0x090d14 }));
-  housing.position.set(0, 5.45, 0.08);
-  group.add(housing);
-
-  const lampSpecs = [
-    { key: "RED", x: -1.25, color: 0xff4a56 },
-    { key: "YELLOW", x: 0, color: 0xffcd49 },
-    { key: "GREEN", x: 1.25, color: 0x58ff8c },
-  ];
-  const lamps = {};
-  for (const spec of lampSpecs) {
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.3, 18, 14), new THREE.MeshBasicMaterial({ color: 0x171717 }));
-    lamp.position.set(spec.x, 5.45, 0.28);
-    group.add(lamp);
-    const glow = new THREE.PointLight(spec.color, 0, 8);
-    glow.position.set(spec.x, 5.45, 0.6);
-    group.add(glow);
-    lamps[spec.key] = { lamp, glow, color: spec.color };
+  getSnapshot() {
+    return this.state;
   }
 
-  const stopLine = new THREE.Mesh(new THREE.BoxGeometry(ROAD_WIDTH - 1, 0.03, 0.4), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  stopLine.position.set(0, 0.03, 8);
-  group.add(stopLine);
+  step(timestamp) {
+    if (!this.landmarker || this.videoEl.readyState < 2) return this.state;
 
-  const crosswalk = new THREE.Group();
-  for (let i = 0; i < 8; i += 1) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.03, 5.5), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.82 }));
-    stripe.position.set(-ROAD_WIDTH * 0.5 + 2.2 + i * 2.05, 0.04, 13.2);
-    crosswalk.add(stripe);
-  }
-  group.add(crosswalk);
-  group.userData.lamps = lamps;
-  group.userData.stopLineZ = 8;
-  return group;
-}
+    if (this.videoEl.currentTime !== this.lastVideoTime) {
+      this.lastVideoTime = this.videoEl.currentTime;
+      this.results = this.landmarker.detectForVideo(this.videoEl, timestamp);
+    }
 
-function labelSprite(text, options = {}) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = options.background || "rgba(255,255,255,0.95)";
-  ctx.strokeStyle = options.border || "#ff3152";
-  ctx.lineWidth = options.borderWidth || 14;
-  ctx.beginPath();
-  ctx.arc(128, 64, 50, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = options.color || "#0c1220";
-  ctx.font = "900 58px Segoe UI, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 128, 70);
-  const tex = new THREE.CanvasTexture(canvas);
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
-  sprite.scale.set(2.5, 1.25, 1);
-  return sprite;
-}
+    const hands = this.results?.landmarks ?? [];
+    let steerTarget = 0;
+    let throttleTarget = 0;
+    let brake = false;
+    const handsOn = hands.length >= 2;
 
-function createSpeedSign(limit) {
-  const group = new THREE.Group();
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.2, 10), new THREE.MeshStandardMaterial({ color: 0xb8c3d4, metalness: 0.4, roughness: 0.35 }));
-  pole.position.y = 1.6;
-  group.add(pole);
-  const sign = labelSprite(String(limit));
-  sign.position.y = 3.25;
-  group.add(sign);
-  group.userData.limit = limit;
-  return group;
-}
+    if (handsOn) {
+      const centers = hands.map((hand) => this.#palmCenter(hand));
+      const left = centers[0].x <= centers[1].x ? centers[0] : centers[1];
+      const right = centers[0].x <= centers[1].x ? centers[1] : centers[0];
+      const wheelAngle = Math.atan2(right.y - left.y, right.x - left.x);
+      steerTarget = this.#clamp(wheelAngle / 0.62, -1, 1);
 
-function createCurveSign(direction) {
-  const group = new THREE.Group();
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.8, 10), new THREE.MeshStandardMaterial({ color: 0xb8c3d4 }));
-  pole.position.y = 1.4;
-  group.add(pole);
+      const gripAvg = hands.reduce((sum, hand) => sum + this.#gripAmount(hand), 0) / hands.length;
+      throttleTarget = this.#clamp((gripAvg - 0.22) / 0.64, 0, 1);
 
-  const canvas = document.createElement("canvas");
-  canvas.width = 240;
-  canvas.height = 180;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffd54a";
-  ctx.fillRect(0, 0, 240, 180);
-  ctx.fillStyle = "#0c1220";
-  ctx.font = "900 110px Segoe UI Symbol, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(direction < 0 ? "↶" : "↷", 120, 95);
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.5), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true }));
-  sign.position.y = 2.85;
-  group.add(sign);
-  return group;
-}
+      const averageHeight = (left.y + right.y) * 0.5;
+      if (averageHeight < 0.28) {
+        brake = true;
+        throttleTarget = 0;
+      }
+    }
 
-export class DrivingScene {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-    this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xa6d6ff, 70, 190);
-    this.scene.add(createSky());
-
-    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 800);
-    this.camera.position.set(0, 10, 24);
-    this.camera.lookAt(0, 1, -10);
-
-    this.#setupWorld();
-    this.#resize();
-    window.addEventListener("resize", () => this.#resize());
-
-    this.state = this.#initialState();
-    this.bestScore = Number(localStorage.getItem("my-driving-skills-best") || 0);
-    this.activeEvents = [];
-    this.segmentCursor = 0;
-    this.roadOffset = 0;
-    this.signalGroup = null;
-    this.currentInput = { steer: 0, throttle: 0, brake: false, handsOn: false };
-    this.finished = false;
-    this.finishReason = "";
-  }
-
-  #initialState() {
-    return {
-      speed: 0,
-      x: 0,
-      worldDistance: 0,
-      score: 100,
-      mistakes: 0,
-      speedLimit: 50,
-      trafficLight: "GREEN",
-      mission: "출발 후 차선을 유지하고 첫 신호 구간을 통과해보세요.",
-      feedback: "안전하게 출발해보세요.",
-      laneCenter: 0,
-      curveDirection: 0,
-      gear: "D",
+    this.state = {
+      steer: this.state.steer + (steerTarget - this.state.steer) * 0.34,
+      throttle: this.state.throttle + (throttleTarget - this.state.throttle) * 0.18,
+      brake,
+      handsOn,
+      hands,
     };
+    return this.state;
   }
 
-  #setupWorld() {
-    const ambient = new THREE.AmbientLight(0xffffff, 1.3);
-    this.scene.add(ambient);
+  draw(canvas, ctx) {
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+    const hands = this.results?.landmarks ?? [];
+    if (!hands.length) return;
 
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(18, 24, 10);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -60;
-    sun.shadow.camera.right = 60;
-    sun.shadow.camera.top = 60;
-    sun.shadow.camera.bottom = -60;
-    this.scene.add(sun);
+    const links = [
+      [0,1],[1,2],[2,3],[3,4],
+      [0,5],[5,6],[6,7],[7,8],
+      [5,9],[9,10],[10,11],[11,12],
+      [9,13],[13,14],[14,15],[15,16],
+      [13,17],[17,18],[18,19],[19,20],[0,17],
+    ];
 
-    const roadTexture = createRoadTexture();
-    this.roadMaterial = new THREE.MeshStandardMaterial({ map: roadTexture, roughness: 0.94, metalness: 0.02 });
-    const road = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_WIDTH, 320), this.roadMaterial);
-    road.rotation.x = -Math.PI * 0.5;
-    road.receiveShadow = true;
-    this.scene.add(road);
-    this.road = road;
+    ctx.strokeStyle = "rgba(106, 240, 255, 0.92)";
+    ctx.fillStyle = "rgba(255, 113, 185, 0.95)";
+    ctx.lineWidth = 3;
 
-    const shoulderGeometry = new THREE.PlaneGeometry(120, 320);
-    const grass = new THREE.Mesh(shoulderGeometry, new THREE.MeshStandardMaterial({ map: createGrassTexture(), roughness: 1 }));
-    grass.rotation.x = -Math.PI * 0.5;
-    grass.position.y = -0.01;
-    this.scene.add(grass);
-
-    this.playerCar = createPlayerCar();
-    this.playerCar.position.set(0, 0, PLAYER_BASE_Z);
-    this.scene.add(this.playerCar);
-
-    this.decorations = new THREE.Group();
-    this.scene.add(this.decorations);
-
-    this.#seedRoadside();
-  }
-
-  #seedRoadside() {
-    const treeMat = new THREE.MeshStandardMaterial({ color: 0x2a8b48, roughness: 0.8 });
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a5735, roughness: 0.9 });
-    for (let z = -140; z <= 140; z += 14) {
-      for (const side of [-1, 1]) {
-        if (Math.random() < 0.35) continue;
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.24, 1.5, 8), trunkMat);
-        trunk.position.set(side * (ROAD_WIDTH * 0.7 + 6 + Math.random() * 12), 0.75, z + Math.random() * 10 - 5);
-        const crown = new THREE.Mesh(new THREE.SphereGeometry(1.1 + Math.random() * 0.5, 12, 10), treeMat);
-        crown.position.set(trunk.position.x, 2.1, trunk.position.z);
-        this.decorations.add(trunk, crown);
+    for (const hand of hands) {
+      for (const [a, b] of links) {
+        ctx.beginPath();
+        ctx.moveTo(hand[a].x * width, hand[a].y * height);
+        ctx.lineTo(hand[b].x * width, hand[b].y * height);
+        ctx.stroke();
+      }
+      for (const point of hand) {
+        ctx.beginPath();
+        ctx.arc(point.x * width, point.y * height, 3, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
   }
 
-  start() {
-    this.state = this.#initialState();
-    this.activeEvents.length = 0;
-    this.segmentCursor = 0;
-    this.finished = false;
-    this.finishReason = "";
-    this.currentInput = { steer: 0, throttle: 0, brake: false, handsOn: false };
-    this.signalGroup = null;
-    this.#clearDynamicObjects();
-  }
-
-  setInput(input) {
-    this.currentInput = input;
-  }
-
-  update(dt) {
-    if (this.finished) {
-      this.#render();
-      return;
+  #palmCenter(landmarks) {
+    let x = 0;
+    let y = 0;
+    for (const index of PALM_IDS) {
+      x += landmarks[index].x;
+      y += landmarks[index].y;
     }
-
-    this.#advanceVehicle(dt);
-    this.#spawnSegments();
-    this.#updateEvents(dt);
-    this.#updateCamera(dt);
-    this.#updateVisuals(dt);
-    this.#render();
-
-    if (this.state.score <= 0) this.#finish("점수가 0점 이하가 되어 연습이 종료되었습니다.");
-    if (this.state.worldDistance >= 2200) this.#finish("연습 코스를 모두 주행했습니다. 멋진 드라이브였어요!");
+    return { x: 1 - x / PALM_IDS.length, y: y / PALM_IDS.length };
   }
 
-  snapshot() {
-    return {
-      speedKmh: Math.round(this.state.speed * 3.2),
-      distanceMeters: Math.round(this.state.worldDistance * 3.6),
-      score: Math.round(this.state.score),
-      mistakes: this.state.mistakes,
-      bestScore: this.bestScore,
-      speedLimit: this.state.speedLimit,
-      trafficLight: this.state.trafficLight,
-      mission: this.state.mission,
-      feedback: this.state.feedback,
-      gear: this.state.gear,
-      finished: this.finished,
-      finishReason: this.finishReason,
-    };
-  }
-
-  #advanceVehicle(dt) {
-    const throttle = this.currentInput.throttle ?? 0;
-    const brake = this.currentInput.brake;
-    const steer = clamp(this.currentInput.steer ?? 0, -1, 1);
-
-    const targetAccel = throttle * 18;
-    const brakeForce = brake ? 30 : 0;
-    const rollingDrag = 7 + this.state.speed * 0.18;
-    const speed = this.state.speed + (targetAccel - brakeForce - rollingDrag) * dt;
-    this.state.speed = clamp(speed, 0, MAX_SPEED);
-
-    const steerPower = (0.7 + this.state.speed * 0.02) * dt * 10;
-    this.state.x += steer * steerPower;
-    this.state.x += (this.state.laneCenter - this.state.x) * 0.08 * dt * 8;
-    this.state.x = clamp(this.state.x, -ROAD_WIDTH * 0.55, ROAD_WIDTH * 0.55);
-    this.playerCar.position.x = this.state.x;
-    this.playerCar.rotation.z = -steer * 0.26;
-    this.playerCar.rotation.y = -steer * 0.08;
-
-    const traveled = this.state.speed * dt;
-    this.state.worldDistance += traveled;
-    this.roadOffset += traveled * 0.014;
-    this.roadMaterial.map.offset.y = -this.roadOffset;
-
-    const wheels = this.playerCar.userData.wheels ?? [];
-    for (const wheel of wheels) wheel.rotation.x -= traveled * 0.9;
-
-    this.state.feedback = this.currentInput.handsOn === false && throttle === 0 && !brake
-      ? "웹캠 사용 시 양손을 화면에 보이게 해주세요. 현재는 기본 감속 상태입니다."
-      : this.state.feedback;
-
-    if (Math.abs(this.state.x) > ROAD_WIDTH * 0.39) {
-      this.#penalize(0.5 * dt, "차선 중앙에서 벗어나고 있습니다. 천천히 복귀하세요.", false);
+  #gripAmount(landmarks) {
+    const dx = landmarks[9].x - landmarks[0].x;
+    const dy = landmarks[9].y - landmarks[0].y;
+    const handScale = Math.hypot(dx, dy) || 1e-3;
+    let extended = 0;
+    for (let finger = 1; finger < 5; finger += 1) {
+      const tip = landmarks[TIP_IDS[finger]];
+      const pip = landmarks[PIP_IDS[finger]];
+      const tipDistance = Math.hypot(tip.x - landmarks[0].x, tip.y - landmarks[0].y);
+      const pipDistance = Math.hypot(pip.x - landmarks[0].x, pip.y - landmarks[0].y);
+      if (tipDistance > pipDistance + handScale * 0.15) extended += 1;
     }
-
-    const speedKmh = this.state.speed * 3.2;
-    if (speedKmh > this.state.speedLimit + 7) {
-      this.#penalize(1.2 * dt, `제한속도 ${this.state.speedLimit}km/h 구간입니다. 속도를 낮춰주세요.`, false);
-    }
-    if (this.state.curveDirection !== 0 && speedKmh > 42) {
-      this.#penalize(1.1 * dt, "커브 구간에서는 감속 후 부드럽게 조향하세요.", false);
-    }
+    return 1 - extended / 4;
   }
 
-  #spawnSegments() {
-    const checkpoints = [0, 180, 360, 560, 780, 980, 1220, 1480, 1760, 1980];
-    while (this.segmentCursor < checkpoints.length && this.state.worldDistance >= checkpoints[this.segmentCursor] - 85) {
-      const marker = checkpoints[this.segmentCursor];
-      if (this.segmentCursor === 0) {
-        this.#spawnSpeedSign(marker + 40, 50);
-      } else if (this.segmentCursor === 1) {
-        this.#spawnSignal(marker + 90, 0);
-      } else if (this.segmentCursor === 2) {
-        this.#spawnCurve(marker + 70, -1);
-      } else if (this.segmentCursor === 3) {
-        this.#spawnCones(marker + 50, [0, 1]);
-      } else if (this.segmentCursor === 4) {
-        this.#spawnSpeedSign(marker + 40, 35);
-      } else if (this.segmentCursor === 5) {
-        this.#spawnSignal(marker + 95, 1);
-      } else if (this.segmentCursor === 6) {
-        this.#spawnNpc(marker + 70, -1.8);
-      } else if (this.segmentCursor === 7) {
-        this.#spawnCurve(marker + 70, 1);
-      } else if (this.segmentCursor === 8) {
-        this.#spawnCones(marker + 60, [-1, 0, 1]);
-      } else if (this.segmentCursor === 9) {
-        this.#spawnSpeedSign(marker + 40, 45);
-      }
-      this.segmentCursor += 1;
-    }
-  }
-
-  #spawnSignal(worldZ, phase = 0) {
-    const rig = createSignalRig();
-    rig.position.set(0, 0, -this.#relativeZ(worldZ));
-    this.scene.add(rig);
-    this.activeEvents.push({ type: "signal", worldZ, object: rig, phase, lastState: null, warned: false, passed: false });
-    this.state.mission = "정지선과 신호를 확인하고 안전하게 통과해보세요.";
-  }
-
-  #spawnSpeedSign(worldZ, limit) {
-    const sign = createSpeedSign(limit);
-    sign.position.set(ROAD_WIDTH * 0.72, 0, -this.#relativeZ(worldZ));
-    this.scene.add(sign);
-    this.activeEvents.push({ type: "speed", worldZ, object: sign, limit, applied: false });
-    this.state.mission = "다음 제한속도 표지판을 확인하고 속도를 맞춰보세요.";
-  }
-
-  #spawnCurve(worldZ, direction) {
-    const sign = createCurveSign(direction);
-    sign.position.set(-ROAD_WIDTH * 0.72 * direction, 0, -this.#relativeZ(worldZ));
-    this.scene.add(sign);
-    this.activeEvents.push({ type: "curve", worldZ, object: sign, direction, activated: false, passed: false });
-    this.state.mission = direction < 0 ? "좌측 커브가 나옵니다. 미리 감속해보세요." : "우측 커브가 나옵니다. 미리 감속해보세요.";
-  }
-
-  #spawnCones(worldZ, laneOffsets) {
-    for (const offset of laneOffsets) {
-      const cone = createCone();
-      cone.position.set(offset * 3.2, 0, -this.#relativeZ(worldZ + Math.random() * 10));
-      this.scene.add(cone);
-      this.activeEvents.push({ type: "cone", worldZ: worldZ + Math.random() * 10, object: cone, hit: false, laneOffset: offset });
-    }
-    this.state.mission = "장애물을 피하면서 차선을 유지해보세요.";
-  }
-
-  #spawnNpc(worldZ, laneX) {
-    const npc = createNpcCar(0xff6b7a);
-    npc.position.set(laneX, 0, -this.#relativeZ(worldZ));
-    this.scene.add(npc);
-    this.activeEvents.push({ type: "npc", worldZ, object: npc, hit: false });
-    this.state.mission = "앞차와 안전거리를 유지하며 접근해보세요.";
-  }
-
-  #updateEvents() {
-    const speedKmh = this.state.speed * 3.2;
-    for (const event of this.activeEvents) {
-      const relativeDistance = event.worldZ - this.state.worldDistance;
-      event.object.position.z = -relativeDistance;
-
-      if (event.type === "speed" && !event.applied && relativeDistance < 24) {
-        event.applied = true;
-        this.state.speedLimit = event.limit;
-        this.state.feedback = `제한속도 ${event.limit}km/h 구간입니다.`;
-      }
-
-      if (event.type === "curve") {
-        if (!event.activated && relativeDistance < 40) {
-          event.activated = true;
-          this.state.curveDirection = event.direction;
-          this.state.laneCenter = event.direction * 1.4;
-          this.state.feedback = event.direction < 0 ? "좌측 커브 구간입니다. 감속 후 부드럽게 조향하세요." : "우측 커브 구간입니다. 감속 후 부드럽게 조향하세요.";
-        }
-        if (!event.passed && relativeDistance < -40) {
-          event.passed = true;
-          this.state.curveDirection = 0;
-          this.state.laneCenter = 0;
-          this.state.feedback = "커브 구간을 통과했습니다. 차선을 다시 정렬해보세요.";
-        }
-      }
-
-      if (event.type === "signal") {
-        const stateIndex = Math.floor(((this.state.worldDistance * 0.16) + event.phase * 4) % 14);
-        const currentState = stateIndex < 7 ? "GREEN" : stateIndex < 9 ? "YELLOW" : "RED";
-        this.#lightSignal(event.object, currentState);
-        this.state.trafficLight = currentState;
-        this.signalGroup = event.object;
-
-        const stopLineDistance = relativeDistance + event.object.userData.stopLineZ;
-        if (!event.warned && stopLineDistance < 30) {
-          event.warned = true;
-          this.state.feedback = currentState === "RED" ? "빨간불입니다. 정지선 앞에 멈추세요." : currentState === "YELLOW" ? "노란불입니다. 무리한 진입을 피하세요." : "초록불입니다. 주변을 확인하고 통과하세요.";
-        }
-        if (!event.passed && stopLineDistance < 0) {
-          event.passed = true;
-          if (currentState === "RED") {
-            this.#penalize(18, "빨간불에서 정지선을 넘었습니다.", true);
-          } else if (currentState === "YELLOW" && speedKmh > 22) {
-            this.#penalize(8, "노란불에서 너무 빠르게 진입했습니다.", true);
-          } else {
-            this.state.feedback = "신호 구간을 안전하게 통과했습니다.";
-            this.state.score += 4;
-          }
-        }
-      }
-
-      if (event.type === "cone" && !event.hit) {
-        if (Math.abs(relativeDistance) < 2.2 && Math.abs(this.state.x - event.object.position.x) < (event.object.userData.hitRadius ?? 0.8)) {
-          event.hit = true;
-          this.#finish("장애물과 충돌했습니다. 다시 연습해보세요.");
-        }
-      }
-
-      if (event.type === "npc" && !event.hit) {
-        event.object.position.z += Math.sin(this.state.worldDistance * 0.015) * 0.02;
-        if (Math.abs(relativeDistance) < 4.2 && Math.abs(this.state.x - event.object.position.x) < 1.65) {
-          event.hit = true;
-          this.#finish("앞차와 충돌했습니다. 속도와 차간거리를 다시 조절해보세요.");
-        }
-      }
-    }
-
-    this.activeEvents = this.activeEvents.filter((event) => event.worldZ > this.state.worldDistance - 140);
-  }
-
-  #lightSignal(signalObject, activeState) {
-    const lamps = signalObject.userData.lamps;
-    for (const [state, lampInfo] of Object.entries(lamps)) {
-      const on = state === activeState;
-      lampInfo.lamp.material.color.setHex(on ? lampInfo.color : 0x171717);
-      lampInfo.glow.intensity = on ? 1.25 : 0;
-    }
-  }
-
-  #updateCamera(dt) {
-    const targetX = this.state.x * 0.5;
-    this.camera.position.x += (targetX - this.camera.position.x) * 0.08 * dt * 8;
-    this.camera.position.y = 8.3 + this.state.speed * 0.04;
-    this.camera.lookAt(this.state.x * 0.15, 1.2, -14);
-  }
-
-  #updateVisuals() {
-    this.playerCar.position.z = PLAYER_BASE_Z;
-  }
-
-  #render() {
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  #clearDynamicObjects() {
-    for (const event of this.activeEvents) {
-      this.scene.remove(event.object);
-    }
-  }
-
-  #relativeZ(worldZ) {
-    return worldZ - this.state.worldDistance;
-  }
-
-  #penalize(amount, message, countMistake) {
-    this.state.score = Math.max(0, this.state.score - amount);
-    this.state.feedback = message;
-    if (countMistake) this.state.mistakes += 1;
-  }
-
-  #finish(reason) {
-    this.finished = true;
-    this.finishReason = reason;
-    this.state.feedback = reason;
-    this.bestScore = Math.max(this.bestScore, Math.round(this.state.score));
-    localStorage.setItem("my-driving-skills-best", String(this.bestScore));
-  }
-
-  #resize() {
-    const rect = this.canvas.getBoundingClientRect();
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
-    this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+  #clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
   }
 }
