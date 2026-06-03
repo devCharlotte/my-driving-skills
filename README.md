@@ -1,1 +1,33 @@
 # my-driving-skills
+
+성준희의 운전 연습용 정적 웹앱입니다.
+
+핵심 특징
+- 게임 포탈/워크 포탈 계열의 네온 글래스 스타일 유지
+- Tesla 느낌의 핸들 이미지를 활용한 조향 UI
+- 웹캠 기반 허공 핸들 조작 또는 키보드 조작 지원
+- 신호등, 정지선, 속도 제한, 커브, 장애물, 차선 유지 연습
+- GitHub Pages에 바로 배포 가능한 정적 구조
+
+파일 구조
+- `index.html` : 메인 화면
+- `styles.css` : 전체 레이아웃과 스타일
+- `js/app.js` : UI 연결, 게임 루프, 입력 모드 관리
+- `js/drive-scene.js` : Three.js 주행 시뮬레이션
+- `js/gesture-wheel.js` : MediaPipe 손 인식 제어
+- `assets/tesla-wheel.png` : Tesla 스타일 핸들 이미지
+
+실행 방법
+```bash
+python3 -m http.server 8080
+```
+또는 VS Code Live Server 등을 사용해 정적 서버로 열면 됩니다.
+
+GitHub Pages 배포
+1. 이 저장소 내용을 그대로 업로드합니다.
+2. Repository Settings → Pages에서 배포 브랜치를 `main` / root 로 선택합니다.
+3. 배포가 완료되면 접속합니다.
+
+주의
+- 웹캠 모드는 `https` 또는 `localhost` 환경에서 사용하는 것이 좋습니다.
+- 이 웹앱은 연습용 시뮬레이션이며 실제 운전 교육을 대체하지 않습니다.
