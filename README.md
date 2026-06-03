@@ -1,1 +1,9 @@
-   
+{
+  "name": "my-driving-skills",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080"
+  }
+}
