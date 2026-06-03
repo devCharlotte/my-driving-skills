@@ -1,33 +1,131 @@
-# my-driving-skills
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Driving Skills</title>
+  <meta name="description" content="성준희의 운전 연습 시뮬레이션 웹사이트" />
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="aurora"></div>
 
-성준희의 운전 연습용 정적 웹앱입니다.
+  <main class="layout">
+    <section class="hero-card panel">
+      <div class="eyebrow">MY DRIVING SKILLS</div>
+      <h1>Driving Practice Studio</h1>
+      <p class="intro">20세에 면허를 취득한 나 성준희. 베스트 드라이버가 되어보겠다아 !!</p>
+      <div class="hero-tags">
+        <span>신호 준수</span>
+        <span>정지선</span>
+        <span>커브 감속</span>
+        <span>차선 유지</span>
+        <span>웹캠 핸들</span>
+      </div>
+      <div class="hero-actions">
+        <button type="button" id="start-camera" class="primary">웹캠으로 시작</button>
+        <button type="button" id="start-keyboard" class="secondary">키보드로 시작</button>
+      </div>
+      <p class="subnote">키보드 조작: ← → 조향 / ↑ 가속 / ↓ 또는 Space 브레이크</p>
+    </section>
 
-핵심 특징
-- 게임 포탈/워크 포탈 계열의 네온 글래스 스타일 유지
-- Tesla 느낌의 핸들 이미지를 활용한 조향 UI
-- 웹캠 기반 허공 핸들 조작 또는 키보드 조작 지원
-- 신호등, 정지선, 속도 제한, 커브, 장애물, 차선 유지 연습
-- GitHub Pages에 바로 배포 가능한 정적 구조
+    <section class="scene-card panel">
+      <canvas id="sim-canvas"></canvas>
 
-파일 구조
-- `index.html` : 메인 화면
-- `styles.css` : 전체 레이아웃과 스타일
-- `js/app.js` : UI 연결, 게임 루프, 입력 모드 관리
-- `js/drive-scene.js` : Three.js 주행 시뮬레이션
-- `js/gesture-wheel.js` : MediaPipe 손 인식 제어
-- `assets/tesla-wheel.png` : Tesla 스타일 핸들 이미지
+      <div class="hud hud-top">
+        <div class="pill big"><span class="label">SPEED</span><span id="speed-value">0</span><span class="unit">km/h</span></div>
+        <div class="pill"><span class="label">LIMIT</span><span id="limit-value">50</span></div>
+        <div class="pill"><span class="label">LIGHT</span><span id="light-value">GREEN</span></div>
+        <div class="pill"><span class="label">GEAR</span><span id="gear-value">D</span></div>
+      </div>
 
-실행 방법
-```bash
-python3 -m http.server 8080
-```
-또는 VS Code Live Server 등을 사용해 정적 서버로 열면 됩니다.
+      <div class="hud hud-bottom">
+        <div class="mission-box">
+          <div class="mission-title">현재 미션</div>
+          <div id="mission-value">출발 후 차선을 유지하고 첫 신호 구간을 통과해보세요.</div>
+        </div>
+        <div class="feedback-box">
+          <div class="mission-title">피드백</div>
+          <div id="feedback-value">안전하게 출발해보세요.</div>
+        </div>
+      </div>
 
-GitHub Pages 배포
-1. 이 저장소 내용을 그대로 업로드합니다.
-2. Repository Settings → Pages에서 배포 브랜치를 `main` / root 로 선택합니다.
-3. 배포가 완료되면 접속합니다.
+      <div class="score-board">
+        <div><span>점수</span><strong id="score-value">100</strong></div>
+        <div><span>실수</span><strong id="mistake-value">0</strong></div>
+        <div><span>거리</span><strong id="distance-value">0 m</strong></div>
+        <div><span>최고점수</span><strong id="best-value">0</strong></div>
+      </div>
+    </section>
 
-주의
-- 웹캠 모드는 `https` 또는 `localhost` 환경에서 사용하는 것이 좋습니다.
-- 이 웹앱은 연습용 시뮬레이션이며 실제 운전 교육을 대체하지 않습니다.
+    <section class="control-card panel">
+      <div class="control-header">
+        <div>
+          <div class="eyebrow">CONTROL ROOM</div>
+          <h2>Tesla-style Steering</h2>
+        </div>
+        <div id="mode-badge" class="badge">대기 중</div>
+      </div>
+
+      <div class="webcam-box">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="hand-overlay"></canvas>
+        <div id="camera-status" class="camera-status">카메라 시작 전</div>
+      </div>
+
+      <div class="wheel-panel">
+        <img id="wheel-visual" src="assets/tesla-wheel.png" alt="Tesla style steering wheel" />
+        <div class="wheel-readout">
+          <div><span>Steer</span><strong id="steer-readout">0°</strong></div>
+          <div><span>Throttle</span><strong id="throttle-readout">0%</strong></div>
+          <div><span>Brake</span><strong id="brake-readout">OFF</strong></div>
+        </div>
+      </div>
+
+      <div class="tip-list">
+        <div class="tip-item"><span>1</span><p>양손을 화면에 보이게 하고 허공 핸들처럼 기울이면 조향됩니다.</p></div>
+        <div class="tip-item"><span>2</span><p>두 손을 더 쥘수록 가속되고 두 손을 위로 들면 브레이크가 작동합니다.</p></div>
+        <div class="tip-item"><span>3</span><p>빨간불에서 정지선을 넘거나 커브에서 과속하면 감점됩니다.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="start-overlay" class="overlay active">
+    <div class="dialog panel">
+      <div class="eyebrow">WELCOME</div>
+      <h2>My Driving Skills</h2>
+      <p>원하는 입력 방식으로 운전 연습을 시작하세요. 신호등, 커브, 차선 유지, 제한속도, 장애물 회피를 연습할 수 있습니다.</p>
+      <div class="dialog-actions">
+        <button type="button" id="overlay-camera" class="primary">웹캠 시작</button>
+        <button type="button" id="overlay-keyboard" class="secondary">키보드 시작</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="finish-overlay" class="overlay">
+    <div class="dialog panel">
+      <div class="eyebrow">DRIVE RESULT</div>
+      <h2>주행 리뷰</h2>
+      <p id="finish-reason">주행이 종료되었습니다.</p>
+      <div class="result-grid">
+        <div><span>최종 점수</span><strong id="finish-score">0</strong></div>
+        <div><span>주행 거리</span><strong id="finish-distance">0 m</strong></div>
+        <div><span>실수 횟수</span><strong id="finish-mistakes">0</strong></div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="restart-button" class="primary">다시 연습하기</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
