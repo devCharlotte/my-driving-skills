@@ -1,91 +1,12 @@
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>My Driving Skills</title>
-  <meta name="description" content="성준희의 운전 연습 시뮬레이션">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <div class="bg-glow"></div>
-
-  <main class="app">
-    <section class="intro panel">
-      <p class="eyebrow">MY DRIVING SKILLS</p>
-      <h1>Driving Practice Studio</h1>
-      <p class="hero-text">20세에 면허를 취득한 나 성준희. 베스트 드라이버가 되어보겠다아 !!</p>
-
-      <div class="button-row">
-        <button type="button" id="cameraBtn" class="primary">웹캠 시작</button>
-        <button type="button" id="keyboardBtn" class="secondary">키보드 시작</button>
-        <button type="button" id="resetBtn" class="ghost">초기화</button>
-      </div>
-
-      <div id="status" class="status">버튼을 누르면 바로 시작됩니다.</div>
-
-      <ul class="rule-list">
-        <li>신호등과 정지선을 지키면 점수가 올라갑니다.</li>
-        <li>커브 구간에서는 제한속도보다 충분히 감속해야 합니다.</li>
-        <li>차선 이탈, 과속, 장애물 충돌, 신호 위반은 감점됩니다.</li>
-        <li>웹캠 권한 요청은 “웹캠 시작” 클릭 직후 바로 실행됩니다.</li>
-      </ul>
-    </section>
-
-    <section class="sim panel">
-      <canvas id="road" width="1000" height="720" aria-label="driving simulator"></canvas>
-
-      <div class="top-hud">
-        <div class="hud-box"><span>SPEED</span><strong id="speed">0</strong><em>km/h</em></div>
-        <div class="hud-box"><span>LIMIT</span><strong id="limit">50</strong><em>km/h</em></div>
-        <div class="hud-box light"><span>LIGHT</span><strong id="light">GREEN</strong></div>
-        <div class="hud-box"><span>SCORE</span><strong id="score">100</strong></div>
-      </div>
-
-      <div class="bottom-hud">
-        <div>
-          <span>MISSION</span>
-          <strong id="mission">출발 후 차선을 유지하며 첫 신호 구간을 통과하세요.</strong>
-        </div>
-        <div>
-          <span>FEEDBACK</span>
-          <strong id="feedback">안전하게 출발해보세요.</strong>
-        </div>
-      </div>
-    </section>
-
-    <section class="control panel">
-      <div class="control-head">
-        <div>
-          <p class="eyebrow">CONTROL ROOM</p>
-          <h2>Tesla-style Wheel</h2>
-        </div>
-        <span id="mode" class="mode">대기</span>
-      </div>
-
-      <div class="camera-card">
-        <video id="video" autoplay muted playsinline></video>
-        <canvas id="hands" width="480" height="360"></canvas>
-        <div id="cameraState">카메라 꺼짐</div>
-      </div>
-
-      <div class="wheel-card">
-        <img id="wheel" src="assets/tesla-wheel.png" alt="Tesla style steering wheel">
-        <div class="meter-row">
-          <div><span>STEER</span><strong id="steerMeter">0°</strong></div>
-          <div><span>THROTTLE</span><strong id="throttleMeter">0%</strong></div>
-          <div><span>BRAKE</span><strong id="brakeMeter">OFF</strong></div>
-        </div>
-      </div>
-
-      <div class="score-grid">
-        <div><span>거리</span><strong id="distance">0 m</strong></div>
-        <div><span>실수</span><strong id="mistake">0</strong></div>
-        <div><span>최고점수</span><strong id="best">0</strong></div>
-      </div>
-    </section>
-  </main>
-
-  <script src="app.js" defer></script>
-</body>
-</html>
+{
+  "name": "my-driving-skills",
+  "version": "1.0.0",
+  "description": "성준희 운전 연습용 MediaPipe + Three.js 웹 시뮬레이터",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes serve -l 8080 .",
+    "dev": "python3 -m http.server 8080"
+  },
+  "keywords": ["mediapipe", "threejs", "hand-tracking", "driving-simulator", "webcam", "github-pages"],
+  "license": "MIT"
+}
