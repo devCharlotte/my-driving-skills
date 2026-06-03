@@ -6,14 +6,7 @@
   <title>My Driving Skills</title>
   <meta name="description" content="성준희의 운전 연습 시뮬레이션 웹사이트" />
   <link rel="stylesheet" href="styles.css" />
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14"
-    }
-  }
-  </script>
+
 </head>
 <body>
   <div class="aurora"></div>
