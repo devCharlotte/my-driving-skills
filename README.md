@@ -46,3 +46,10 @@ GitHub Pages 배포
 주의
 - `file://`로 직접 열면 카메라 권한 팝업이 정상적으로 뜨지 않을 수 있습니다.
 - GitHub Pages 또는 localhost에서는 정상적으로 카메라 권한 요청이 실행됩니다.
+
+
+최종 안정화 수정
+- 버튼 클릭 시 inline bootstrap이 가장 먼저 getUserMedia({ video: true, audio: false })를 호출합니다.
+- Three.js와 MediaPipe가 실패해도 카메라 권한 요청 자체는 먼저 실행됩니다.
+- 카메라 실패 시 화면에 NotAllowedError, NotFoundError, NotReadableError 등 실제 오류명이 표시됩니다.
+- Tesla 스타일 휠은 root와 assets 경로에 모두 포함되어 경로 문제를 줄였습니다.
