@@ -334,3 +334,13 @@ addEventListener("keyup", (e) => (keys[e.key] = false));
 
 const origRead = hands.read.bind(hands);
 hands.read = (ts) => keyboardOverride(origRead(ts));
+
+// 탭이 백그라운드로 갔다 돌아올 때 dt 급변·MediaPipe 타임스탬프 역행으로 인한
+// 한 프레임 끊김/튐을 방지한다.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    last = performance.now();
+    hands.resetTiming?.();
+  }
+});
+addEventListener("focus", () => { last = performance.now(); hands.resetTiming?.(); });
